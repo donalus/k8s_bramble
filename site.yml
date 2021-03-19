@@ -1,0 +1,17 @@
+---
+# This Playbook deploys the entire k8s cluster
+
+- hosts: all
+  become: true
+  roles:
+  - role: common
+
+- hosts: controllers
+  become: true
+  roles:
+  - role: controller
+
+- hosts: nodes
+  become: true
+  roles:
+  - role: node
