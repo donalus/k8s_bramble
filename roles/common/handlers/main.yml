@@ -1,13 +1,18 @@
 ---
 # Handlers for docker and kubelet
 
-- name: restart docker
+- name: docker status old
+  service:
+    name: docker
+    state: started
+
+- name: docker status
   systemd:
     name: docker
     daemon_reload: yes
     state: restarted
 
-- name: Restart kubelet
+- name: restart kubelet
   systemd:
     name: kubelet
     daemon_reload: yes

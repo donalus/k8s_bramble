@@ -2,7 +2,9 @@
 # This Playbook perfoms tasks common to all roles.
 
 - name: Create the hosts file for all machines
-  template: src=hosts.j2 dest=/etc/hosts
+  template: 
+    src: hosts.j2 
+    dest: /etc/hosts
 
 - name: Update apt cache and upgrade packages
   apt:
@@ -19,90 +21,97 @@
       - gnupg-agent
       - software-properties-common
 
+- name: Add key for Docker
+  apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    state: present
 
-    - name: Add key for Docker
-      apt_key:
-        url: https://download.docker.com/linux/ubuntu/gpg
-        state: present
+- name: Add apt repository for stable Docker version
+  apt_repository:
+    repo: deb [arch=arm64] https://download.docker.com/linux/ubuntu bionic stable
+    state: present
 
-    - name: Add apt repository for stable Docker version
-      apt_repository:
-        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu bionic stable
-        state: present
+- name: Install docker
+  apt:
+    pkg:
+      - docker-ce=5:19.03.15~3-0~ubuntu-bionic
+      - docker-ce-cli=5:19.03.15~3-0~ubuntu-bionic
+      - containerd.io
+    update_cache: yes
+  notify:
+    - docker status
 
-    - name: Install docker
-      apt:
-        pkg:
-          - docker-ce
-          - docker-ce-cli
-          - containerd.io
-        update_cache: yes
-      notify:
-        - docker status
+- name: Freeze docker-ce to kubernetes verified version
+  dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  with_items:
+    - docker-ce
+    - docker-ce-cli
 
-    # Fixing errors: Docker is currently using cgroupfs and that is not recommended
+# Fixing errors: Docker is currently using cgroupfs and that is not recommended
 
-    - name: Change Docker to use systemd and not cgroupfs
-      lineinfile:
-        path: /lib/systemd/system/docker.service
-        regexp: '^ExecStart=/usr/bin/dockerd'
-        line: ExecStart=/usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock --exec-opt native.cgroupdriver=systemd
-    
-    - name: Start docker service
-      systemd:
-        name: docker
-        daemon_reload: yes
-        state: started
-          
-    - name: Add vagrant user to docker group
-      user:
-        name: vagrant
-        group: docker
+- name: Change Docker to use systemd and not cgroupfs
+  lineinfile:
+    path: /lib/systemd/system/docker.service
+    regexp: '^ExecStart=/usr/bin/dockerd'
+    line: ExecStart=/usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock --exec-opt native.cgroupdriver=systemd
 
-    # Step 2.2: Kubelet will not start if the system has swap enabled,
-    # so we are disabling swap using the below code.
+- name: Start docker service
+  systemd:
+    name: docker
+    daemon_reload: yes
+    state: started
+        
+- name: Add ubuntu user to docker group
+  user:
+    name: ubuntu
+    group: docker
 
-    - name: Remove swapfile from /etc/fstab
-      mount:
-        name: "{{ item }}"
-        fstype: swap
-        state: absent
-      with_items:
-        - swap
-        - none
+# Step 2.2: Kubelet will not start if the system has swap enabled,
+# so we are disabling swap using the below code.
 
-    - name: Disable swap
-      command: swapoff -a
-      when: ansible_swaptotal_mb > 0
+- name: Remove swapfile from /etc/fstab
+  mount:
+    name: "{{ item }}"
+    fstype: swap
+    state: absent
+  with_items:
+    - swap
+    - none
 
-    - name: Add an apt signing key for Kubernetes
-      apt_key:
-        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
-        state: present
+- name: Disable swap
+  command: swapoff -a
+  when: ansible_swaptotal_mb > 0
 
-    - name: Adding apt repository for Kubernetes
-      apt_repository:
-        repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
-        state: present
-        filename: kubernetes.list
+- name: Add an apt signing key for Kubernetes
+  apt_key:
+    url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+    state: present
 
-    - name: Install Kubernetes binaries
-      apt:
-        state: present
-        update_cache: yes
-        pkg:
-          - kubelet
-          - kubeadm
-          - kubectl
+- name: Adding apt repository for Kubernetes
+  apt_repository:
+    repo: deb [arch=arm64] https://apt.kubernetes.io/ kubernetes-xenial main
+    state: present
+    filename: kubernetes.list
 
-    - name: Configure node ip
-      lineinfile:
-        path: /etc/default/kubelet
-        line: KUBELET_EXTRA_ARGS=--node-ip={{ node_ip }}
-        create: yes
+- name: Install Kubernetes binaries
+  apt:
+    state: present
+    update_cache: yes
+    pkg:
+      - kubelet
+      - kubeadm
+      - kubectl
 
-    - name: Start kubelet
-      systemd:
-        name: kubelet
-        daemon_reload: yes
-        state: started
+- name: Configure node ip
+  lineinfile:
+    path: /etc/default/kubelet
+    line: KUBELET_EXTRA_ARGS=--node-ip={{ ansible_facts['default_ipv4']['address'] }}
+    create: yes
+
+- name: Restart kubelet
+  systemd:
+    name: kubelet
+    daemon_reload: yes
+    state: restarted

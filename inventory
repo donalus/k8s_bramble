@@ -1,5 +1,12 @@
+[all]
+bramble0[0:2]
+
+[all:vars]
+apiserver_address=192.168.68.200
+pod_cidr=10.244.0.0/16
+
 [controllers]
 bramble00
 
 [nodes]
-bramble0[1:3]
+bramble0[1:2]
