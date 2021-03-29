@@ -8,14 +8,16 @@
 
 # maybe not the most reliable check?
 - name: Check for evidence that kubeadm init has run
+  become: true
   stat:
     path: /etc/kubernetes/manifests/kube-apiserver.yaml
   register: stat_kubeadm_evidence
 
 - name: Initialize the k8s cluster
-  command: kubeadm init --apiserver-advertise-address="{{ apiserver_address }}" --apiserver-cert-extra-sans="{{ apiserver_address }}"  --node-name k8s-controller --pod-network-cidr="{{ pod_cidr}}"
+  become: true
+  command: kubeadm init --apiserver-advertise-address="{{ apiserver_address }}" --apiserver-cert-extra-sans="{{ apiserver_address }}"  --node-name bramble00 --pod-network-cidr="{{ pod_cidr}}"
   when: not stat_kubeadm_evidence.stat.exists
-
+ 
 # Step 2.4: Setup the kube config file for the vagrant user to access the
 # Kubernetes cluster using the below code.
 
@@ -24,8 +26,6 @@
   file:
     path: /home/ubuntu/.kube
     state: directory
-    owner: ubuntu
-    group: ubuntu
     mode: 0775
 
 - name: Check if local kube config exists
@@ -36,6 +36,7 @@
 # Why use these commands and not copy?
 # copy's src does not escallate permissions; become only applies to the dest
 - name: Setup kubeconfig for ubuntu user
+  become: true
   command: "{{ item }}"
   with_items:
   - cp -i /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
@@ -49,45 +50,31 @@
 
 # Step 2.5: Setup the container networking provider and the network policy engine 
 # using the below code.
-# Straying from tutorial to use canal and metallb
-# https://docs.projectcalico.org/getting-started/kubernetes/flannel/flannel
-
-# TODO: Verify this is idempotent
-#
+# Straying from tutorial to use flannel and metallb
 
 - name: Create k8s_setup folder for staging
   file:
     path: /home/ubuntu/k8s_setup
     state: directory
-    owner: ubuntu
-    group: ubuntu
     mode: 0775
 
-- name: Copy canal manifest
-  copy:
-    src: canal.yaml
-    dest: /home/ubuntu/k8s_setup
-  
-- name: Install canal pod network
-  become: false
-  command: kubectl apply -f /home/ubuntu/k8s_setup/canal.yaml
+# Testing if just flannel will work
+- name: Install flannel cni provider
+  command: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
 
 # Install load balancer service MetalLB.
 # https://https://metallb.universe.tf/usage/
 
 - name: Change kube-proxy to uses strictARP (pre MetalLB)
-  become: false
   command: "kubectl get configmap kube-proxy -n kube-system -o yaml | sed -e \"s/strictARP: false/strictARP: true/\" | kubectl apply -f - -n kube-system"
   register: arp_result
   ignore_errors: yes
   changed_when: arp_result.rc != 0
 
 - name: MetalLB - Create Namespace
-  become: false
   command: kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.9.6/manifests/namespace.yaml
   
 - name: MetalLB - Install
-  become: false
   command: kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.9.6/manifests/metallb.yaml
 
 - name: Copy MetalLB configuration file
@@ -96,14 +83,12 @@
     dest: /home/ubuntu/k8s_setup
 
 - name: MetalLB - Configure
-  become: false
   command: kubectl apply -f /home/ubuntu/k8s_setup/metallb-config.yaml
 
 # On first install only
+# This seems to be the only thing that breaks when run a second time...
 - name: MetalLB - Create Secret
-  become: false
   command: kubectl create secret generic -n metallb-system memberlist --from-literal=secretkey="$(openssl rand -base64 128)"
-
 
 # Step 2.6: Generate kube join command for joining the node to the Kubernetes 
 # cluster and store the command in the file named join-command. 

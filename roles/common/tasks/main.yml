@@ -1,18 +1,55 @@
 ---
 # This Playbook perfoms tasks common to all roles.
 
+- name: Change hostname
+  become: true
+  hostname: 
+    name: "{{ inventory_hostname }}"
+
+# From https://stackoverflow.com/questions/61972815/ansible-lineinfile-module-do-not-add-new-line
+- name: Enable container features
+  become: true
+  replace:
+    path: /boot/firmware/cmdline.txt
+    regexp: '^([\w](?!.*\b{{ item }}\b).*)$'
+    replace: '\1 {{ item }}'
+  with_items:
+  - "cgroup_enable=cpuset"
+  - "cgroup_memory=1"
+  - "cgroup_enable=memory"
+  register: container_features
+
+- name: Reboot after enabling container features
+  become: true
+  reboot:
+  when: container_features.changed
+
 - name: Create the hosts file for all machines
+  become: true
   template: 
     src: hosts.j2 
     dest: /etc/hosts
 
 - name: Update apt cache and upgrade packages
+  become: true
   apt:
     name: "*"
     update_cache: yes
     state: latest
+    cache_valid_time: 3600
+
+- name: Check if reboot required
+  stat:
+    path: /var/run/reboot-required
+  register: reboot_required_file
+
+- name: Reboot if required
+  become: true
+  reboot:
+  when: reboot_required_file.stat.exists == true
 
 - name: Install packages to allow apt over https
+  become: true
   apt:
     pkg:
       - apt-transport-https
@@ -22,16 +59,20 @@
       - software-properties-common
 
 - name: Add key for Docker
+  become: true
   apt_key:
     url: https://download.docker.com/linux/ubuntu/gpg
     state: present
 
 - name: Add apt repository for stable Docker version
+  become: true
   apt_repository:
     repo: deb [arch=arm64] https://download.docker.com/linux/ubuntu bionic stable
     state: present
+    filename: docker.list
 
 - name: Install docker
+  become: true
   apt:
     pkg:
       - docker-ce=5:19.03.15~3-0~ubuntu-bionic
@@ -42,6 +83,7 @@
     - docker status
 
 - name: Freeze docker-ce to kubernetes verified version
+  become: true
   dpkg_selections:
     name: "{{ item }}"
     selection: hold
@@ -52,18 +94,21 @@
 # Fixing errors: Docker is currently using cgroupfs and that is not recommended
 
 - name: Change Docker to use systemd and not cgroupfs
+  become: true
   lineinfile:
     path: /lib/systemd/system/docker.service
     regexp: '^ExecStart=/usr/bin/dockerd'
     line: ExecStart=/usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock --exec-opt native.cgroupdriver=systemd
 
 - name: Start docker service
+  become: true
   systemd:
     name: docker
     daemon_reload: yes
-    state: started
+    state: restarted
         
 - name: Add ubuntu user to docker group
+  become: true
   user:
     name: ubuntu
     group: docker
@@ -72,6 +117,7 @@
 # so we are disabling swap using the below code.
 
 - name: Remove swapfile from /etc/fstab
+  become: true
   mount:
     name: "{{ item }}"
     fstype: swap
@@ -81,21 +127,25 @@
     - none
 
 - name: Disable swap
+  become: true
   command: swapoff -a
   when: ansible_swaptotal_mb > 0
 
 - name: Add an apt signing key for Kubernetes
+  become: true
   apt_key:
     url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
     state: present
 
 - name: Adding apt repository for Kubernetes
+  become: true
   apt_repository:
     repo: deb [arch=arm64] https://apt.kubernetes.io/ kubernetes-xenial main
     state: present
     filename: kubernetes.list
 
 - name: Install Kubernetes binaries
+  become: true
   apt:
     state: present
     update_cache: yes
@@ -105,12 +155,14 @@
       - kubectl
 
 - name: Configure node ip
+  become: true
   lineinfile:
     path: /etc/default/kubelet
     line: KUBELET_EXTRA_ARGS=--node-ip={{ ansible_facts['default_ipv4']['address'] }}
     create: yes
 
 - name: Restart kubelet
+  become: true
   systemd:
     name: kubelet
     daemon_reload: yes
